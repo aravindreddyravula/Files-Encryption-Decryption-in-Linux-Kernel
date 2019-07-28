@@ -1,0 +1,97 @@
+			CSE 506 Operating Systems Spring 2019
+			Author		: Aravind Reddy Ravula
+			SBUID		: 112026804
+
+Overview: 
+In this assignment I have implemented a Linux Kernel Module which supports a sys_cpenc system call. This system call supports three operations copy, encrytion and decryption.
+
+There are mainly two files in which the code is located:
+	1. User land	: xhw1.c
+	2. Kernel land 	: sys_cpenc.c
+
+Details:
+
+There is a structure "struct input_args" which is typedef as INPUT_ARGUMENTS in arg_struct.h file. The fields of this structure are infile, outfile, keybuf, keylen, flag, infile_length, outfile_length.
+
+1. User land	: xhw1.c
+- In xhw1 c file I have parsed the arguments given by user using getopt(3) and filled in the fields of INPUT_ARGUMENTS which has to be passed to syscall. sys_cpenc syscall will accept a void * argument.
+- Initially password is verified by it's length which should be least 6 characters long.
+- The password passed by user is hashed using MD5 algorithm to 16 bytes and stored in keybuf field.
+- A check is made to verify whether any two of the operations are given together like (Copy and Encryption), (Copy and Decryption), (Encryption and Decryption). 
+- A check on input and output files are done as they are mandatory for the syscall to run.
+- The flags used are: 
+	-e encryption which needs password with -p
+	-d decryption which needs password with -p
+	-c copy from one file to another(which doesn't require password)
+	-p password
+	-h help message
+- The program will exit if any other flag other than above mentioned is given.
+
+2. Kernel land : sys_cpenc.c
+- In the kernel level first various checks for the fields sent by user is done like:
+	- whether the user address space is valid or not using access_ok() function.
+	- whether the input and output files are valid and do not point to the same inode.
+	- whether the files are regular and have proper read/write permissions. 
+	- whether proper flags and their combinations are given or not.
+	- whether there are any arguments missing or any argument is NULL.
+- Then the data is copied from user to kernel address space using copy_from_user() for integer fields and getname() for string fields. 
+- The function file_encrypt_decrypt has code corresponding to the opeartions corresponding to the syscall
+	- COPY:
+		- Command to execute copy which copies one file to another:
+		./xcpenc -c infile outfile
+		- If the output file is not there it will be created on the fly and data will be copied into it from input file.
+		- If the output file already exists the data will in it will be truncated and the input file is copied into it.
+		- Output file is given the same permissions as that of the input file.
+		- If the file is partially copied due to some reason it will be deleted using vfs_unlink()
+		- File is copied in the blocks of page size which is 4096 bytes.
+		- If the input file size is zero, an output file of size zero bytes is created.
+	- ENCRYPTION
+		- Command to execute encryption which writes input file to output file after encryption
+		./xcpenc -p password -e infile outfile
+		- -c, -p are the mandatory arguments for the syscall to run encryption on a file.
+		- During encryption the password is converted into 16 bytes hash using MD5 algorithm in the function "key_to_password_encrypt()" and is written at the begining of the output file which is called preamble.
+		- After that the data from input file is read in the blocks of size which is minimum of 4096 bytes or the remaining file size which has to be encrypted and sent to the AES(CTR) encryption algorithm which was implemented in encrpytion_decryption_skcipher(). The Initialization Vector used for encryption is a static one which is "aravindreddyravu" which is 16 bytes.
+		- Then encrypted data is append into the output file after the preamble. 
+		- If the input file is partially encrypted due to some reasons the output file which is partially written is deleted using vfs_unlink(). If the input file is of size zero the output file will have the hashed password which is the preamble of 16 bytes.
+	- DECRYPTION
+		- Command to execute to decrypt a file 
+		./xcpenc -p password -d infile outfile
+		- The most important check which is made the file should be decrypted using the same password which it is encrpted with. For this I have read the first 16 bytes from the input file and hashed the password which I got from the user and checked whether they are same or not. If they are not same then the syscall will terminate from there with error saying that the password doesn't match. If the password is same then the syscall will decrypt the input file by reading minimum of 4096 bytes or the remaining content which has to be decrypted from the input file and write to output file.
+		- If the output file is partially written because of some reason it will be deleted by using vfs_unlink().
+		- If the input file consists only the preamble then the output file will have size of zero bytes.
+
+EXTRA_CREDIT:
+Initialization Vector:
+- I have implemented enhanced Initialization Vector which has the page number in the first 8 bytes of IV and the inode number in the next 8 bytes and is passed for the encryption and decryption.
+Encryption:
+- In the case of encrpytion the second 8 bytes of IV which is the inode number is written into output file. So the effective preamble will be 16 bytes hashed password + 8 bytes inode number of the input file.
+Decryption:
+- In the case of decryption the first 16 bytes of the input file is read to compare it against the hashed password sent by the user.
+- The next 8 bytes will have the inode number of the file which was the input file during the encryption.This will be sent to the AES(CTR) encrpytion_decryption_skcipher() function which will reconstruct the Initialization Vector using the page number and inode number to decrypt the input file.
+- If the initialization vector doesn't match with the initialization vector during the encryption, decryption will not be done. 
+
+Test Scripts:
+- I have written few test scripts with names test**.sh where ** corresponds to 01, 02, 03,... which tests the functionality of sys_cpenc system call.
+- Few of the scripts test functionalities like:
+	- Copying large files
+	- Encryption and Decryption with same key
+	- Encryption and Decryption with different key
+	- If the input or output file is not regular
+
+Submitted files:
+- sys_cpenc.c
+- xhw1.c
+- tcpenc.c
+- test01.sh, test02.sh, ...
+- MakeFile
+- README
+- kernel.config
+- arg_struct.h
+
+References:
+1. https://www3.cs.stonybrook.edu/~ezk/cse506-s19/hw1.txt
+2. https://elixir.bootlin.com/linux/v4.20.6/source
+3. https://elixir.bootlin.com/linux/latest/source/Documentation/crypto/api-intro.txt
+4. https://www.kernel.org/doc/html/v4.18/crypto/api-samples.html
+5. https://www.gurutechnologies.net/blog/aes-ctr-encryption-in-c/
+6. https://www.geeksforgeeks.org/getopt-function-in-c-to-parse-command-line-arguments/
