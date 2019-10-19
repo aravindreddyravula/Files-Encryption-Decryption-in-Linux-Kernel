@@ -1,0 +1,1 @@
+Implemented an asynchronous system call to process various jobs like encryption, decryption, compression, extraction, concatenation of files/ checksum calculation concurrently all in the kernel space using Linux Crypto APIs.
